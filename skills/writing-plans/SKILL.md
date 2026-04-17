@@ -103,6 +103,30 @@ git commit -m "feat: add specific feature"
 ```
 ````
 
+### Commit messages: no temp files
+
+Commit messages — including multi-line ones — go straight to `git commit` via `-m` or a here-doc. Do **not** write `tmp/commit-msg-*.txt` or similar scratch files to hold the message.
+
+```bash
+# Single line — fine
+git commit -m "feat: add specific feature"
+
+# Multi-line — pass -m twice (first is subject, rest are body paragraphs)
+git commit -m "refactor: standardize hyphenated output names to underscores" \
+           -m "Rename 29 hyphenated output names in project/outputs.tf and update all module.project.* references. Child module output names are internal; root outputs unaffected, zero plan changes."
+
+# Or here-doc when you need exact formatting
+git commit -F - <<'EOF'
+refactor: standardize hyphenated output names to underscores
+
+Rename 29 hyphenated output names in project/outputs.tf and update
+all module.project.* references. Child module output names are
+internal; root outputs unaffected, zero plan changes.
+EOF
+```
+
+Plans should show the commit command directly. Never instruct the engineer (or yourself) to "write the message to a file first" — that step does not exist.
+
 ## No Placeholders
 
 Every step must contain the actual content an engineer needs. These are **plan failures** — never write them:
