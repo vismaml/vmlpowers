@@ -1,6 +1,6 @@
 ---
 name: guiding-pr-review
-description: Use when a human reviewer asks you to help them review a PR or branch — orients them on what changed, ranks files by review importance, and proposes a reading order. Read-only analysis, not a review. Distinct from the built-in /review skill (which produces a review) and from requesting-code-review (which dispatches a reviewer agent).
+description: Use when a human reviewer asks you to help them review a PR or branch — orients them on what changed, ranks files by review importance, proposes a reading order, and emits `code -g` commands to jump straight to each line. Read-only analysis, not a review. Distinct from the built-in /review skill (which produces a review) and from requesting-code-review (which dispatches a reviewer agent).
 ---
 
 # Guiding PR Review
@@ -24,6 +24,7 @@ Help a human reviewer orient themselves in a PR. You are **not** reviewing — y
 - Keep output compact (budgets below)
 - Read the PR discussion before ranking files
 - Name specific files and line ranges, not vague areas
+- Emit `code -g file:line` commands so the reviewer can jump straight in
 
 ## Workflow
 
@@ -31,7 +32,7 @@ Help a human reviewer orient themselves in a PR. You are **not** reviewing — y
 1. GATHER   → PR metadata, description, discussion, file list, diffstat, commits
 2. TRIAGE   → split files into FOCUS vs SKIM tiers
 3. ORDER    → build a review path through FOCUS files
-4. REPORT   → emit the tight summary (see Output Budget)
+4. REPORT   → emit the tight summary + code -g commands (see Output Budget)
 ```
 
 ### 1. Gather
@@ -59,7 +60,7 @@ gh pr diff <ref> -- <file>
 
 **SKIM tier** (flag as "don't spend time here"):
 - Lockfiles: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `Cargo.lock`, `go.sum`, `poetry.lock`, `Gemfile.lock`
-- Generated: `*_pb.go`, `*.pb.*`, generated SDK clients, OpenAPI-generated code, `*.generated.*`
+- Generated: `*_pb.go`, `*.pb.*`, generated SDK clients, OpenAPI-generated code, `*.generated.*`, mocks (`mock_*.go`, `*_mock.go`)
 - Snapshots: `*.snap`, `__snapshots__/`
 - Vendored: `vendor/`, `third_party/`
 - Pure renames / formatting-only diffs (detect with `git diff --stat` + `--find-renames`)
@@ -95,7 +96,7 @@ Each entry: `path/to/file.ext:Lstart-Lend — one-line reason`. No paragraphs.
 
 Produce a single message with these sections, nothing else:
 
-```
+````
 ## What changed
 - 3–5 bullets, one line each. Behavior, not file list.
 
@@ -110,13 +111,28 @@ Produce a single message with these sections, nothing else:
 2. file:L200-L240 — core handler, where validation moved
 3. ...
 
+## Open in editor
+```
+code -g path/to/file.ext:10
+code -g path/to/file.ext:200
+...
+```
+
 ## Flags (only if real)
 - Unresolved discussion thread on <file:line>
 - Diff is 2k LOC — reviewer should timebox
 - Test file touches no new assertion for <behavior>
-```
+````
 
 Omit any section that would be empty. Do not pad.
+
+### Open in editor — rules
+- Emit one `code -g <file>:<start-line>` per review-path entry, in the same order as the review path.
+- If an entry references multiple line ranges (e.g. `repo.go:61-62,531-551`), emit one command per range, using the **start** line of each.
+- Use the range start line, not end. The reviewer scrolls from there.
+- Use paths exactly as they appear in the diff (repo-relative, no leading `./`).
+- Put the whole block inside a fenced code block so it is one copy-paste.
+- If the reviewer's editor is not VS Code, mention once that `code -g` can be swapped for their equivalent (`cursor -g`, `idea --line N file`, `vim +N file`) — do not emit duplicates for every editor.
 
 ## Output Budget
 
@@ -126,6 +142,7 @@ Omit any section that would be empty. Do not pad.
 | Why | 2 sentences |
 | Skip or skim | no limit, but 1 line each |
 | Review path | 10 entries max, 1 line each |
+| Open in editor | one `code -g` line per review-path line range |
 | Flags | only concrete items, no speculation |
 
 If you cannot fit a finding in the budget, it probably belongs in the reviewer's own notes, not yours.
@@ -140,6 +157,7 @@ If you cannot fit a finding in the budget, it probably belongs in the reviewer's
 | "Let me write this to a notes file" | Read-only. Output in chat only. |
 | "I need to read every file fully" | Read FOCUS files in full, SKIM files only enough to classify. |
 | "The PR has no description, I'll skip gathering" | Check commits and discussion — intent often lives there. |
+| "I'll point `code -g` at line 1 if unsure" | No. Re-read the hunk and pick the real starting line. |
 
 ## Handling Edge Cases
 
@@ -148,10 +166,11 @@ If you cannot fit a finding in the budget, it probably belongs in the reviewer's
 - **Draft PR:** still fine to orient; flag "draft — intent may shift".
 - **Huge PR (>1k LOC or >30 files):** explicitly recommend the reviewer timebox and focus on the first 3 path entries; ask whether they want a narrower pass.
 - **Merge commits in range:** use `git log --no-merges` and `git diff <base>...<head>` (three dots) to stay on the branch's own work.
+- **New file with no obvious anchor:** point `code -g` at the line of the most important exported symbol, not line 1.
 
 ## Example (abbreviated)
 
-```
+````
 ## What changed
 - New POST /exports/csv endpoint, auth required, rate-limited per org
 - Export job now runs via worker queue instead of inline
@@ -167,18 +186,28 @@ Inline exports were timing out for orgs with >50k rows. Moves to async job per i
 - tests/fixtures/large_org.json — fixture data, shape only
 
 ## Review path
-1. src/api/routes.ts:L45-L72 — new route, auth + rate-limit wiring
-2. src/exports/job.ts:L1-L180 — core async job, start here for logic
-3. migrations/2026_04_add_export_jobs.sql — schema, check indexes
-4. src/api/routes.ts:L310-L330 — /download-all removal, check no internal callers
-5. src/workers/registry.ts:L22-L35 — job registration
-6. tests/exports/job.test.ts — skim: confirms retry + failure paths covered
+1. src/api/routes.ts:45-72 — new route, auth + rate-limit wiring
+2. src/exports/job.ts:1-180 — core async job, start here for logic
+3. migrations/2026_04_add_export_jobs.sql:1 — schema, check indexes
+4. src/api/routes.ts:310-330 — /download-all removal, check no internal callers
+5. src/workers/registry.ts:22-35 — job registration
+6. tests/exports/job.test.ts:1 — skim: confirms retry + failure paths covered
+
+## Open in editor
+```
+code -g src/api/routes.ts:45
+code -g src/exports/job.ts:1
+code -g migrations/2026_04_add_export_jobs.sql:1
+code -g src/api/routes.ts:310
+code -g src/workers/registry.ts:22
+code -g tests/exports/job.test.ts:1
+```
 
 ## Flags
-- Unresolved thread on src/exports/job.ts:L120 about retry backoff
+- Unresolved thread on src/exports/job.ts:120 about retry backoff
 - No test for rate-limit behavior on the new route
-```
+````
 
 ## The Bottom Line
 
-Orient, don't review. Short, not thorough. Read-only, not editorial.
+Orient, don't review. Short, not thorough. Read-only, not editorial. Every path entry ships with a `code -g` so the reviewer's next click is one copy-paste away.
